@@ -34,10 +34,10 @@ def is_subheading(child: str, parent: str) -> bool:
 
 class WiktionaryParser:
     def __init__(self) -> None:
-        self.url = "https://en.wiktionary.org/wiki/{}?printable=yes"
+        self.url = "https://en.m.wiktionary.org/wiki/{}?printable=yes"
         self.soup = None
         self.session = requests.Session()
-        self.session.mount("http://", requests.adapters.HTTPAdapter(max_retries = 2))
+#        self.session.mount("http://", requests.adapters.HTTPAdapter(max_retries = 2))
         self.session.mount("https://", requests.adapters.HTTPAdapter(max_retries = 2))
         self.language: str = 'english'
         self.current_word = None
@@ -110,27 +110,49 @@ class WiktionaryParser:
         return id_list
 
     def get_word_data(self, language: str) -> list:
+#        print(f"SOUP: {self.soup}")
+#        contents = [
+#            div for div in self.soup.find_all('div', {'class': 'vector-toc-text'})
+#            if len(div.find_all('span')) == 2
+#        ]
+        word_contents: list[str] = []
         contents = self.soup.find_all('span', {'class': 'toctext'})
+#        for content in contentz:
+#            print(content)
+#            # Extract only the second span's text (which doesn't contain the number)
+#            span_text = content.find_all('span')[1].text.strip()
+#            print(span_text)
+#            word_contents.append(span_text)
+#        print(f"CONTENTS: {word_contents}")
+#        exit(1)
         word_contents = []
         start_index = None
         for content in contents:
+#            logging.warning(f"Content.text.lower(): {content.text.lower()}")
             if content.text.lower() == language:
                 start_index = content.find_previous().text + '.'
         if not start_index:
             if contents:
+#                logging.warning(content.text)
+#                exit(3)
                 return []
             language_heading = self.soup.find_all(
                 "span",
                 {"class": "mw-headline"},
+#                {"class": "mw-heading"},
                 string=lambda s: s.lower() == language
             )
             if not language_heading:
+                logging.warning(f"LANGUAGE HEADING: {language_heading}")
                 return []
         for content in contents:
             index = content.find_previous().text
             content_text = self.remove_digits(content.text.lower())
+#            logging.warning(f"content_text: {content_text}")
             if index.startswith(start_index) and content_text in self.INCLUDED_ITEMS:
                 word_contents.append(content)
+#                logging.warning(f"CONTENT TEXT: {content.text}")
+#                exit(1)
         word_data = {
             'examples': self.parse_examples(word_contents),
             'definitions': self.parse_definitions(word_contents),
@@ -148,7 +170,11 @@ class WiktionaryParser:
         pronunciation_div_classes = ['mw-collapsible', 'vsSwitcher']
         for pronunciation_index, pronunciation_id, _ in pronunciation_id_list:
             pronunciation_text = []
-            span_tag = self.soup.find_all('span', {'id': pronunciation_id})[0]
+            span_tag = self.soup.find_all('h3', {'id': pronunciation_id})
+            if len(span_tag) < 1:
+                logging.error(f"Failed to find section for {pronunciation_id}")
+                continue
+            span_tag = span_tag[0]
             list_tag = span_tag.parent
             while list_tag.name != 'ul':
                 list_tag = list_tag.find_next_sibling()
@@ -175,8 +201,13 @@ class WiktionaryParser:
         definition_list = []
         definition_tag = None
         for def_index, def_id, def_type in definition_id_list:
+            logging.critical(f"def_index, def_id, def_type: {def_index}, {def_id}, {def_type}")
             definition_text = []
-            span_tag = self.soup.find_all('span', {'id': def_id})[0]
+            span_tag = self.soup.find_all('h3', {'id': def_id})
+            if len(span_tag) < 1:
+                logging.error(f"Failed to find section for {def_id}")
+                continue
+            span_tag = span_tag[0]
             table = span_tag.parent.find_next_sibling()
             while table and table.name not in ['h3', 'h4', 'h5']:
                 definition_tag = table
@@ -195,9 +226,15 @@ class WiktionaryParser:
 
     def parse_examples(self, word_contents) -> list:
         definition_id_list = self.get_id_list(word_contents, 'definitions')
+        print(definition_id_list)
         example_list = []
         for def_index, def_id, def_type in definition_id_list:
-            span_tag = self.soup.find_all('span', {'id': def_id})[0]
+            logging.warning("defID:" + def_id)
+            span_tag = self.soup.find_all('h3', {'id': def_id})
+            if len(span_tag) < 1:
+                logging.error(f"Failed to find section for {def_id}")
+                continue
+            span_tag = span_tag[0]
             table = span_tag.parent
             while table.name != 'ol':
                 table = table.find_next_sibling()
@@ -220,7 +257,11 @@ class WiktionaryParser:
         etymology_tag = None
         for etymology_index, etymology_id, _ in etymology_id_list:
             etymology_text = ''
-            span_tag = self.soup.find_all('span', {'id': etymology_id})[0]
+            span_tag = self.soup.find_all('h3', {'id': etymology_id})
+            if len(span_tag) < 1:
+                logging.error(f"Failed to find section for {etymology_id}")
+                continue
+            span_tag = span_tag[0]
             next_tag = span_tag.parent.find_next_sibling()
             while next_tag and next_tag.name not in ['h3', 'h4', 'div', 'h5']:
                 etymology_tag = next_tag
@@ -238,7 +279,11 @@ class WiktionaryParser:
         related_words_list = []
         for related_index, related_id, relation_type in relation_id_list:
             words = []
-            span_tag = self.soup.find_all('span', {'id': related_id})[0]
+            span_tag = self.soup.find_all('h3', {'id': related_id})
+            if len(span_tag) < 1:
+                logging.error(f"Failed to find section for {related_id}")
+                continue
+            span_tag = span_tag[0]
             parent_tag = span_tag.parent
             while parent_tag and not parent_tag.find_all('li'):
                 parent_tag = parent_tag.find_next_sibling()
@@ -282,6 +327,7 @@ class WiktionaryParser:
         language = self.language if not language else language
         response = self.session.get(self.url.format(word), params={'oldid': old_id})
         self.soup = BeautifulSoup(response.text.replace('>\n<', '><'), 'html.parser')
+#        print(response.text)
         self.current_word = word
         self.clean_html()
         return self.get_word_data(language.lower())
